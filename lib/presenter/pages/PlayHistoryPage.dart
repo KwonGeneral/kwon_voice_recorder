@@ -1,5 +1,6 @@
 
 
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:kwon_voice_recorder/common/Scheme.dart';
@@ -55,7 +56,7 @@ class PlayHistoryPage extends StatelessWidget {
 
   // 본문 내용 결정
   Widget _buildBody(BuildContext context, PlayHistoryPageViewModel model) {
-    if (model.isLoading) {
+    if (model.isLoading || model.isInitializing) {
       return _buildLoadingState();
     } else if (model.hasError) {
       return _buildErrorState(model);
@@ -445,6 +446,10 @@ class PlayHistoryPageViewModel extends BaseViewModel {
   bool _isLoading = false;
   bool get isLoading => _isLoading;
 
+  // 초기화 중인지 여부
+  bool _isInitializing = true;
+  bool get isInitializing => _isInitializing;
+
   // 오류 상태
   bool _hasError = false;
   bool get hasError => _hasError;
@@ -503,17 +508,28 @@ class PlayHistoryPageViewModel extends BaseViewModel {
   @override
   Future<void> init() async {
     Log.d('[PlayHistoryPageViewModel] init 시작');
+    _isInitializing = true;
 
     try {
       // 현재 선택된 녹음 ID 가져오기
-      final recordId = Get.arguments?['id'] as String?;
-      Log.d('[PlayHistoryPageViewModel] 전달받은 ID: $recordId');
+      final recordId = Get.arguments?['id'];
+      Log.d('[PlayHistoryPageViewModel] 전달받은 ID: $recordId, 타입: ${recordId?.runtimeType}');
 
       if (recordId != null) {
-        await _loadRecordData(recordId);
+        try {
+          await _loadRecordData(recordId.toString());
+        } catch (e, s) {
+          Log.e('[PlayHistoryPageViewModel] 녹음 데이터 로드 실패: $e', s);
+          _hasError = true;
+          _errorMessage = '녹음을 찾을 수 없습니다: $e';
+          update();
+        }
       } else {
         Log.e('[PlayHistoryPageViewModel] ID가 전달되지 않음', StackTrace.current);
-        throw Exception('녹음 ID가 전달되지 않았습니다');
+        _hasError = true;
+        _errorMessage = '녹음 ID가 전달되지 않았습니다';
+        update();
+        return;
       }
 
       // 오디오 플레이어 이벤트 리스너
@@ -521,33 +537,68 @@ class PlayHistoryPageViewModel extends BaseViewModel {
 
       await dataUpdate();
       Log.d('[PlayHistoryPageViewModel] init 완료');
-    } catch (e) {
-      Log.e('[PlayHistoryPageViewModel] init 오류: $e', StackTrace.current);
+    } catch (e, s) {
+      Log.e('[PlayHistoryPageViewModel] init 오류: $e', s);
       _hasError = true;
       _errorMessage = '녹음을 불러올 수 없습니다: $e';
-      update();
     }
-  }
 
-  // 에러 상태 설정
-  void _setErrorState(String message) {
-    _hasError = true;
-    _errorMessage = message;
+    _isInitializing = false;
     update();
   }
 
-  // 녹음 데이터 로드
+  // _loadRecordData 메소드 개선
   Future<void> _loadRecordData(String recordId) async {
     try {
+      Log.d('[PlayHistoryPageViewModel] _loadRecordData 호출: ID=$recordId');
       final records = await _getHistoryUseCase.call();
-      _currentRecord = records.firstWhere(
-            (record) => record.id == recordId,
-        orElse: () => throw Exception('녹음을 찾을 수 없습니다'),
-      );
+      Log.d('[PlayHistoryPageViewModel] 녹음 목록 조회 결과: ${records.length}개');
 
-      _totalDuration = _currentRecord!.duration;
-      update();
+      // 직접 탐색 로직 구현
+      bool found = false;
+      for (var record in records) {
+        // ID 값과 타입 출력
+        Log.d('[PlayHistoryPageViewModel] 비교: ${record.id}(${record.id.runtimeType}) vs $recordId(${recordId.runtimeType})');
+
+        // 다양한 방법으로 비교 시도
+        if (record.id.toString() == recordId.toString()) {
+          _currentRecord = record;
+          found = true;
+          Log.d('[PlayHistoryPageViewModel] ID로 녹음을 찾음: ${record.fileName}');
+          break;
+        }
+        // 파일명으로도 시도
+        else if (record.fileName.contains(recordId) ||
+            recordId.contains(record.fileName)) {
+          _currentRecord = record;
+          found = true;
+          Log.d('[PlayHistoryPageViewModel] 파일명으로 녹음을 찾음: ${record.fileName}');
+          break;
+        }
+      }
+
+      if (!found) {
+        // 정확한 오류 정보
+        Log.e('[PlayHistoryPageViewModel] 녹음을 찾을 수 없음: $recordId', StackTrace.current);
+
+        // 가장 최근 녹음으로 대체
+        if (records.isNotEmpty) {
+          _currentRecord = records.first;
+          Log.d('[PlayHistoryPageViewModel] 녹음을 찾지 못해 최근 녹음으로 대체: ${_currentRecord!.fileName}');
+        } else {
+          throw Exception('녹음을 찾을 수 없습니다: ID=$recordId');
+        }
+      }
+
+      if (_currentRecord != null) {
+        _totalDuration = _currentRecord!.duration;
+        update();
+        Log.d('[PlayHistoryPageViewModel] 녹음 데이터 로드 성공: ${_currentRecord!.fileName}');
+      } else {
+        throw Exception('녹음을 찾을 수 없습니다');
+      }
     } catch (e, s) {
+      Log.e('[PlayHistoryPageViewModel] _loadRecordData 오류: $e', s);
       _errorUtil.logError(e, s, tag: 'PlayHistoryPageViewModel._loadRecordData');
       throw e;
     }

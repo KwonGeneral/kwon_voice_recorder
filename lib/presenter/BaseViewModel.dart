@@ -1,4 +1,5 @@
 
+import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:kwon_voice_recorder/common/utils/Log.dart';
 
@@ -17,6 +18,14 @@ abstract class BaseViewModel extends GetxController {
       Log.e(e, s);
       update();
     }
+  }
+
+  @override
+  onReady() {
+    super.onReady();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      initialize();
+    });
   }
 
   void clear({bool isInitClear = false});

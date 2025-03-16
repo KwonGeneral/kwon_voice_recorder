@@ -78,35 +78,7 @@ class RecordingPage extends StatelessWidget {
                   Expanded(
                     flex: 3,
                     child: model.recordStatus == RecordStatus.PLAY
-                        ? Center(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: List.generate(
-                            9, // 고정된 개수의 바
-                                (index) {
-                              // 각 바마다 약간 다른 높이를 설정 (음성 파형 효과)
-                              final baseHeight = model.recordStatus == RecordStatus.PLAY
-                                  ? (model.audioLevels.isNotEmpty ? model.audioLevels[index % model.audioLevels.length] : 0.3)
-                                  : 0.3;
-
-                              Log.d('[RecordingPage] 파형 바 #$index 높이: $baseHeight');
-
-                              return AnimatedContainer(
-                                duration: const Duration(milliseconds: 100),
-                                width: 5,
-                                height: 80 * baseHeight,
-                                decoration: BoxDecoration(
-                                  color: KwonThemes().primary.withOpacity(0.7),
-                                  borderRadius: BorderRadius.circular(5),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    )
+                        ? _buildWaveformAnimation(model)  // 별도 메서드로 추출
                         : Container(),
                   ),
 
@@ -285,15 +257,37 @@ class RecordingPage extends StatelessWidget {
   }
 
   // 오디오 파형 시각화 (간단한 애니메이션)
+  // 파형 애니메이션 생성 메서드
   Widget _buildWaveformAnimation(RecordingPageViewModel model) {
+    // 디버깅용 로그
+    for (int i = 0; i < model.audioLevels.length; i++) {
+      Log.d('[RecordingPage] audioLevels[$i]: ${model.audioLevels[i]}');
+    }
+
     return Center(
-      child: SizedBox(
-        height: 100,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: List.generate(
             model.audioLevels.length,
-                (index) => _buildBar(index, model.audioLevels[index]),
+                (index) {
+              // 실제 오디오 레벨 값 사용
+              final level = model.audioLevels[index];
+
+              // 상세 로깅
+              Log.d('[RecordingPage] 실제 사용되는 파형 바 #$index 높이: $level');
+
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 100),
+                width: 5,
+                height: 80 * level,  // 오디오 레벨 적용
+                decoration: BoxDecoration(
+                  color: KwonThemes().primary.withOpacity(0.7),
+                  borderRadius: BorderRadius.circular(5),
+                ),
+              );
+            },
           ),
         ),
       ),
@@ -392,15 +386,22 @@ class RecordingPageViewModel extends BaseViewModel {
   void _updateAudioLevels(double level) {
     Log.d('[RecordingPageViewModel] 오디오 레벨 업데이트: $level');
 
-    // 새로운 오디오 레벨 값들로 업데이트
-    _audioLevels = List.generate(9, (index) {
-      // 인덱스에 따라 조금씩 다른 높이 (시각적 효과)
-      final randomFactor = 0.7 + ((index % 3) * 0.1);
-      return (level * randomFactor).clamp(0.05, 1.0);
-    });
+    // 새로운 오디오 레벨 값으로 업데이트
+    List<double> newLevels = [];
+    for (int i = 0; i < 9; i++) {
+      final randomFactor = 0.7 + ((i % 3) * 0.1);
+      final newLevel = (level * randomFactor).clamp(0.05, 1.0);
+      newLevels.add(newLevel);
+    }
+
+    _audioLevels = newLevels;
+
+    // 업데이트 후 로그
+    Log.d('[RecordingPageViewModel] 오디오 레벨 배열 업데이트 완료: $_audioLevels');
 
     // UI 강제 업데이트
     update();
+    Log.d('[RecordingPageViewModel] UI 업데이트 요청 완료');
   }
 
   // 오디오 레벨 스트림 구독

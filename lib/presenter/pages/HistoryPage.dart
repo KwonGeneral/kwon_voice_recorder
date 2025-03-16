@@ -20,48 +20,13 @@ import 'package:kwon_voice_recorder/presenter/style/TextStyles.dart';
 import 'package:kwon_voice_recorder/presenter/theme/Themes.dart';
 
 // MARK: - 녹음 기록 페이지
-class HistoryPage extends StatefulWidget {
+class HistoryPage extends StatelessWidget {
   const HistoryPage({super.key});
-
-  @override
-  State<HistoryPage> createState() => _HistoryPageState();
-}
-
-class _HistoryPageState extends State<HistoryPage> {
-
-  @override
-  void initState() {
-    super.initState();
-
-    // 등록된 UseCase 확인을 위한 테스트 코드
-    try {
-      final getHistoryUseCase = getIt<GetHistoryUseCase>();
-      Log.d('[HistoryPage] GetHistoryUseCase를 성공적으로 가져왔습니다.');
-    } catch (e) {
-      Log.e('GetHistoryUseCase를 가져오는 중 오류 발생: $e', StackTrace.current);
-
-      // UseCase가 등록되어 있지 않은 경우 수동 등록 시도
-      try {
-        final repo = getIt<RecordRepositoryImpl>();
-        getIt.registerSingleton<GetHistoryUseCase>(GetHistoryUseCase(repo));
-        Log.d('[HistoryPage] GetHistoryUseCase를 수동으로 등록했습니다.');
-      } catch (e) {
-        Log.e('GetHistoryUseCase 수동 등록 중 오류 발생: $e', StackTrace.current);
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     return GetBuilder<HistoryPageViewModel>(
       init: HistoryPageViewModel(),
-      initState: (state) {
-        // 페이지가 초기화될 때 데이터 로드 명시적 호출
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          final model = Get.find<HistoryPageViewModel>();
-          model.dataUpdate();
-        });
-      },
       builder: (model) {
         Log.d('[HistoryPage] 빌드: recordList 개수 = ${model.recordList.length}');
 
@@ -135,9 +100,24 @@ class _HistoryPageState extends State<HistoryPage> {
 
                   // 로딩 중인 경우
                   if (model.isLoading)
-                    const Expanded(
+                    Expanded(
                       child: Center(
-                        child: CircularProgressIndicator(),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(
+                              color: KwonThemes().primary,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              '녹음 목록 로딩 중...',
+                              style: TextStyles.medium(
+                                fontSize: 16,
+                                color: KwonThemes().black50,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     )
                   // 오류가 있는 경우
@@ -184,7 +164,7 @@ class _HistoryPageState extends State<HistoryPage> {
                       ),
                     )
                   // 목록이 비어있을 때
-                  else if (model.recordList.isEmpty)
+                  else if (!model.isLoading && !model.isInitializing && model.recordList.isEmpty)
                       Expanded(
                         child: Center(
                           child: Column(
@@ -230,17 +210,17 @@ class _HistoryPageState extends State<HistoryPage> {
                         ),
                       )
                     // 녹음 목록
-                    else
-                      Expanded(
-                        child: ListView.builder(
-                          itemCount: model.recordList.length,
-                          itemBuilder: (context, index) {
-                            final record = model.recordList[index];
-                            Log.d('[HistoryPage] 아이템 빌드 #$index: ${record.fileName}');
-                            return _buildRecordItem(context, record, model);
-                          },
+                    else if (!model.isLoading && model.recordList.isNotEmpty)
+                        Expanded(
+                          child: ListView.builder(
+                            itemCount: model.recordList.length,
+                            itemBuilder: (context, index) {
+                              final record = model.recordList[index];
+                              Log.d('[HistoryPage] 아이템 빌드 #$index: ${record.fileName}');
+                              return _buildRecordItem(context, record, model);
+                            },
+                          ),
                         ),
-                      ),
                 ],
               ),
             ),
@@ -581,6 +561,10 @@ class HistoryPageViewModel extends BaseViewModel {
   bool _isLoading = false;
   bool get isLoading => _isLoading;
 
+  // 초기화 중인지 여부
+  bool _isInitializing = true;
+  bool get isInitializing => _isInitializing;
+
   // 오류 상태
   bool _hasError = false;
   bool get hasError => _hasError;
@@ -605,25 +589,19 @@ class HistoryPageViewModel extends BaseViewModel {
     Log.d('[HistoryPageViewModel] dataUpdate 시작');
     _isLoading = true;
     _hasError = false;
-    update();
+    update(); // 로딩 상태로 즉시 업데이트
 
     try {
       Log.d('[HistoryPageViewModel] useCase 호출 전');
+
+      // 최소한의 로딩 표시를 위해 잠시 대기
+      await Future.delayed(const Duration(milliseconds: 300));
 
       final results = await _getHistoryUseCase.call();
 
       Log.d('[HistoryPageViewModel] useCase 호출 후, 결과 길이: ${results.length}');
 
-      _recordList = [...results]; // 새 목록으로 할당 (중요)
-
-      if (_recordList.isEmpty) {
-        Log.d('[HistoryPageViewModel] 녹음 목록이 비어 있습니다.');
-      } else {
-        // 각 항목 자세히 로깅
-        for (int i = 0; i < _recordList.length; i++) {
-          Log.d('[HistoryPageViewModel] 녹음[$i]: id=${_recordList[i].id}, fileName=${_recordList[i].fileName}');
-        }
-      }
+      _recordList = [...results]; // 새 목록으로 할당
 
       // 검색어가 있으면 필터링
       if (_searchText.isNotEmpty) {
@@ -638,39 +616,37 @@ class HistoryPageViewModel extends BaseViewModel {
     } finally {
       _isLoading = false;
       Log.d('[HistoryPageViewModel] dataUpdate 완료, recordList 개수: ${_recordList.length}');
-      update();
+      update(); // 최종 상태로 다시 업데이트
     }
   }
 
   @override
   Future<void> init() async {
     Log.d('[HistoryPageViewModel] init 시작');
+    _isInitializing = true;
 
     try {
-      // 녹음 목록을 즉시 불러오도록 변경
+      // 로딩 상태로 설정
       _isLoading = true;
-      update(); // 로딩 상태 UI 업데이트
+      update(); // 즉시 로딩 상태 표시
 
-      // 잠시 대기하여 UI가 로딩 상태를 표시할 시간을 줌
-      await Future.delayed(const Duration(milliseconds: 100));
-
-      // 바로 데이터 로드 시작
+      // 녹음 목록 로드
       final results = await _getHistoryUseCase.call();
 
       Log.d('[HistoryPageViewModel] 녹음 목록 로드 완료: ${results.length}개');
 
       _recordList = [...results]; // 새 목록으로 복사
-      _isLoading = false;
-
-      Log.d('[HistoryPageViewModel] init 완료, recordList 개수: ${_recordList.length}');
     } catch (e) {
       Log.e('[HistoryPageViewModel] init 오류: $e', StackTrace.current);
       _hasError = true;
       _errorMessage = '녹음 목록을 불러올 수 없습니다.';
+    } finally {
       _isLoading = false;
+      _isInitializing = false;
+      Log.d('[HistoryPageViewModel] init 완료, recordList 개수: ${_recordList.length}');
     }
 
-    update(); // 최종 상태로 UI 업데이트
+    update();
   }
 
   // 녹음 삭제
